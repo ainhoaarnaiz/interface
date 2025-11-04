@@ -6,7 +6,7 @@
     <title>ESP32-S3 BLE Listener</title>
 
     <style>
-        body { /* (Estilos CSS omitidos por brevedad, usa los estilos de tu código anterior) */
+        body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background-color: #f0f2f5;
             color: #333;
@@ -27,8 +27,18 @@
             max-width: 500px;
         }
 
-        #connectButton {
-            background-color: #007bff;
+        h1 {
+            color: #1a1a1a;
+            margin-bottom: 1rem;
+        }
+
+        .button-group {
+            display: flex;
+            justify-content: center;
+            gap: 10px; /* Espacio entre botones */
+        }
+
+        #connectButton, #disconnectButton {
             color: white;
             border: none;
             padding: 12px 24px;
@@ -37,6 +47,30 @@
             font-weight: 600;
             cursor: pointer;
             transition: background-color 0.3s ease;
+        }
+
+        #connectButton {
+            background-color: #007bff;
+        }
+
+        #connectButton:hover {
+            background-color: #0056b3;
+        }
+        
+        #disconnectButton {
+            background-color: #dc3545; /* Rojo para desconexión */
+            display: none; /* Oculto por defecto */
+        }
+
+        #disconnectButton:hover {
+            background-color: #bd2130;
+        }
+
+
+        #status {
+            font-size: 1rem;
+            color: #666;
+            margin: 1.5rem 0;
         }
 
         #data-display-container {
@@ -50,7 +84,7 @@
         #data-value {
             font-size: 4.5rem; 
             font-weight: 700;
-            color: #28a745; /* Color para los datos */
+            color: #28a745;
             line-height: 1;
         }
     </style>
@@ -59,7 +93,12 @@
 
     <div class="container">
         <h1>ESP32-S3 BLE Data Monitor</h1>
-        <button id="connectButton">Connect to ESP32-S3</button>
+        
+        <div class="button-group">
+            <button id="connectButton">Connect to ESP32-S3</button>
+            <button id="disconnectButton">Disconnect</button>
+        </div>
+
         <div id="status">Status: Disconnected</div>
 
         <div id="data-display-container">
@@ -70,6 +109,7 @@
     
     <script>
         const connectButton = document.getElementById('connectButton');
+        const disconnectButton = document.getElementById('disconnectButton');
         const statusDisplay = document.getElementById('status');
         const dataValueDisplay = document.getElementById('data-value');
 
@@ -77,62 +117,89 @@
         const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
         const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
         
-        // --- Web Bluetooth Logic ---
+        let bluetoothDevice; // Variable global para almacenar el dispositivo
+        let characteristic; // Variable global para almacenar la característica
+
+        // --- Manejadores de Eventos ---
+
+        // Función para limpiar la interfaz
+        function cleanupInterface() {
+            statusDisplay.textContent = 'Status: Disconnected';
+            dataValueDisplay.textContent = '--';
+            connectButton.style.display = 'inline-block';
+            disconnectButton.style.display = 'none';
+        }
+
+        // Función para manejar la desconexión
+        function onDisconnectClick() {
+            if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+                // 1. Detiene las notificaciones
+                if (characteristic) {
+                     characteristic.stopNotifications();
+                     characteristic.removeEventListener('characteristicvaluechanged', handleESP32Data);
+                     characteristic = null;
+                }
+                
+                // 2. Desconecta el servidor GATT
+                bluetoothDevice.gatt.disconnect();
+                console.log('Successfully disconnected from GATT server.');
+            }
+            // 3. Limpia la interfaz
+            cleanupInterface();
+            bluetoothDevice = null;
+        }
+
+        // Función que se activa si el dispositivo se desconecta inesperadamente
+        function onDeviceDisconnected(event) {
+            console.log(`Device ${event.target.name} disconnected unexpectedly.`);
+            onDisconnectClick(); // Llama a la lógica de limpieza
+        }
 
         async function onConnectClick() {
             try {
                 statusDisplay.textContent = 'Scanning for devices...';
-
-                // 1. Pide dispositivos que soporten nuestro UUID de servicio personalizado
-                const device = await navigator.bluetooth.requestDevice({
+                
+                // Pide dispositivos
+                bluetoothDevice = await navigator.bluetooth.requestDevice({
                     filters: [{ services: [SERVICE_UUID] }],
                 });
+                
+                console.log('Found device:', bluetoothDevice.name);
+                statusDisplay.textContent = `Connecting to ${bluetoothDevice.name}...`;
+                
+                // Añade un listener para la desconexión inesperada
+                bluetoothDevice.addEventListener('gattserverdisconnected', onDeviceDisconnected);
 
-                console.log('Found device:', device.name);
-                statusDisplay.textContent = `Connecting to ${device.name}...`;
-
-                // 2. Conecta al GATT server
-                const server = await device.gatt.connect();
+                const server = await bluetoothDevice.gatt.connect();
                 console.log('Connected to GATT server');
 
-                // 3. Obtiene el servicio
                 const service = await server.getPrimaryService(SERVICE_UUID);
-                console.log('Got custom service');
-
-                // 4. Obtiene la característica de medición
-                const characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
-                console.log('Got custom characteristic');
-
-                // 5. Suscribe a notificaciones
-                await characteristic.startNotifications();
-                console.log('Subscribed to notifications');
+                characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
                 
-                statusDisplay.textContent = `Connected to ${device.name}`;
+                await characteristic.startNotifications();
+                
+                statusDisplay.textContent = `Connected to ${bluetoothDevice.name}`;
                 connectButton.style.display = 'none';
+                disconnectButton.style.display = 'inline-block'; // Muestra el botón de desconexión
 
-                // 6. Escucha nuevos valores
                 characteristic.addEventListener('characteristicvaluechanged', handleESP32Data);
 
             } catch (error) {
                 console.error('Error connecting to device:', error);
-                statusDisplay.textContent = `Error: ${error.message}. Check console for details.`;
+                statusDisplay.textContent = `Error: ${error.message}`;
+                cleanupInterface(); // Asegura que la interfaz esté limpia tras un error
             }
         }
 
-        connectButton.addEventListener('click', onConnectClick);
-
-        // Esta función se llama cada vez que el ESP32 envía una notificación
         function handleESP32Data(event) {
-            const value = event.target.value; // DataView
-            
-            // El ESP32 nos está enviando un solo byte (Uint8)
+            const value = event.target.value;
             const receivedData = value.getUint8(0); 
-
-            console.log(`Received data: ${receivedData}`);
-            
-            // Actualiza el valor en la pantalla
             dataValueDisplay.textContent = receivedData;
         }
+
+        // --- Listeners de botones ---
+        connectButton.addEventListener('click', onConnectClick);
+        disconnectButton.addEventListener('click', onDisconnectClick);
     </script>
 </body>
 </html>
