@@ -162,7 +162,6 @@
                 // Pide dispositivos
                 bluetoothDevice = await navigator.bluetooth.requestDevice({
                     filters: [{ services: [SERVICE_UUID] }],
-                    optionalServices: [SERVICE_UUID]
                 });
                 
                 console.log('Found device:', bluetoothDevice.name);
